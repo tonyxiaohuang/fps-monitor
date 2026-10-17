@@ -747,10 +747,12 @@ int main(int argc, char** argv) {
 
     LOGI("fps_monitor 启动");
 
+    LOGI("[1] 调用 initDraw ...");
     if (!initDraw(false)) {
         LOGE("initDraw 失败（窗口/EGL/ImGui 初始化失败）");
         return -1;
     }
+    LOGI("[2] initDraw 完成");
 
     // 按屏幕短边自适应 UI（基准 1080），兼容小屏 / 高分屏 / 平板
     {
@@ -760,22 +762,28 @@ int main(int argc, char** argv) {
         ImGui::GetIO().FontGlobalScale = g_ui;
         g_ball_size = 150.f * g_ui;
         g_panel_w   = std::min(900.f * g_ui, (float)displayInfo.width * 0.92f);
-        LOGI("屏幕 %dx%d 旋转=%d  UI缩放=%.2f",
+        LOGI("[3] 屏幕 %dx%d 旋转=%d  UI缩放=%.2f",
              displayInfo.width, displayInfo.height, displayInfo.orientation, g_ui);
     }
 
     applyTheme();
+    LOGI("[4] 主题已应用");
 
     // 悬浮球初始位置
     g_ball_x = std::max(0.f, displayInfo.width - g_ball_size - 30.f);
     g_ball_y = displayInfo.height * 0.3f;
 
+    LOGI("[5] 启动系统帧率线程 ...");
     g_sysfps.start();
+    LOGI("[6] 初始化触摸 ...");
     g_touch.init();
     g_touch.start();
+    LOGI("[7] 初始化音量键 ...");
     g_keys.init();
     g_keys.start();
+    LOGI("[8] 初始化完成，进入主循环");
 
+    bool first_frame = true;
     while (g_running) {
         // 把 /dev/input 的触摸喂给 ImGui（必须在 drawBegin 之前）
         if (g_touch.ok()) {
@@ -801,10 +809,15 @@ int main(int argc, char** argv) {
         g_last_frame_ns = t;
         g_have_prev = true;
 
+        if (first_frame) LOGI("[9] drawBegin ...");
         drawBegin();      // ImGui 画图开始
+        if (first_frame) LOGI("[10] drawFloatBall ...");
         drawFloatBall();
+        if (first_frame) LOGI("[11] drawPanel ...");
         drawPanel();
+        if (first_frame) LOGI("[12] drawEnd ...");
         drawEnd();        // ImGui 画图结束 + 提交
+        if (first_frame) { LOGI("[13] 第一帧绘制完成"); first_frame = false; }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }

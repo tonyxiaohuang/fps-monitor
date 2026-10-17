@@ -112,6 +112,11 @@ bool init_egl(uint32_t _screen_x, uint32_t _screen_y, bool SwitchLog)
 		// native_window = android::ANativeWindowCreator::Create("Ssage", _screen_x, _screen_y, 1, 0x40);
 	// }
 	native_window = android::ANativeWindowCreator::Create("ScreenRecorder", _screen_x, _screen_y, false);
+	__android_log_print(ANDROID_LOG_INFO, "FPS_MON", "Create 窗口=%p (%ux%u)", native_window, _screen_x, _screen_y);
+	if (native_window == nullptr) {
+		__android_log_print(ANDROID_LOG_ERROR, "FPS_MON", "创建窗口失败：Create() 返回空指针（需要 root / 设备不支持）");
+		return 0;
+	}
 	ANativeWindow_acquire(native_window);
 	display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
 	if (display == EGL_NO_DISPLAY) {
@@ -205,49 +210,61 @@ void ImGuiMenustyle2()
 }
 bool Android_LoadSystemFont()
 {
-    char path[64] {0};
-    char *filename = nullptr;
-    const char *fontPath[] = {"/system/fonts", "/system/font", "/data/fonts"};
-    for (auto tmp:fontPath)
-    {
-        if (access(tmp, R_OK) == 0)
-        {
-            strcpy(path, tmp);
-            filename = path + strlen(tmp);
-            break;
-        }
-    }
-    if (!filename)
-    {
-        return false;
-    }
-    *filename++ = '/';
-    strcpy(filename, "NotoSansCJK-Regular.ttc");
-    if (access(path, R_OK) != 0)
-    {
-        strcpy(filename, "NotoSerifCJK-Regular.ttc");
-        if (access(path, R_OK) != 0)
-        {
-            return false;
-        }
-    }
     ImGuiIO *Io = &ImGui::GetIO();
-    static ImVector<ImWchar>RanGes;
+
+    // 需要的字形范围：ASCII/拉丁 + 界面实际用到的汉字
+    // （范围过大 = 全 CJK 3 万+ 字形，图集 >1GB 会 OOM 崩溃）
+    static ImVector<ImWchar> RanGes;
     if (RanGes.empty())
     {
         ImFontGlyphRangesBuilder builder;
-        constexpr ImWchar Ranges[] {0x0020, 0x00FF, 0x0100, 0x024F, 0x0300, 0x03FF, 0x0400, 0x052F, 0x0600, 0x06FF, 0x0E00, 0x0E7F, 0x2DE0, 0x2DFF, 0x2000, 0x206F, 0x3000, 0x30FF, 0x31F0, 0x31FF, 0xFF00, 0xFFEF, 0x4E00, 0x9FAF, 0xA640, 0xA69F, 0x3131, 0x3163, 0xAC00, 0xD7A3, 0};
-        builder.AddRanges(Ranges);
-        builder.AddRanges(Io->Fonts->GetGlyphRangesChineseSimplifiedCommon());
+        builder.AddRanges(Io->Fonts->GetGlyphRangesDefault());
+        static const char* ui_zh =
+            "一不个为主于位低作入全出初到制刷前力动化匹协单口可听启均备多失始完屏已帧幕平应开循悬成打找据接摸操改放数新旋无时显曲更最有未权没测浮点率环球用的监直示秒程窗第系线绘统缩置耗能行要触计议设读调败转运近进退部配重量键限需音题高（），：";
+        builder.AddText(ui_zh);
         builder.BuildRanges(&RanGes);
     }
-    ImFontConfig config;
-    config.FontDataOwnedByAtlas = false;
-    config.SizePixels = 45;
-    config.GlyphRanges = RanGes.Data;
-    config.OversampleH = 1;
-    config.OversampleV = 1;
-    return Io->Fonts->AddFontFromFileTTF(path, 0, &config);
+
+    // 候选字体：stb_truetype 只认 TrueType(glyf) 与部分 CFF，
+    // NotoSansCJK 是 CID-keyed CFF（stb 常失败），所以优先真 TrueType 中文字体。
+    static const char* cands[] = {
+        "/system/fonts/MiSansVF.ttf",              // 小米 MiSans（TrueType 变量字体）
+        "/system/fonts/MiSansTCVF.ttf",
+        "/system/fonts/HONORSansCN-Regular.ttf",   // 荣耀
+        "/system/fonts/DroidSansFallbackFull.ttf", // 老设备
+        "/system/fonts/DroidSansFallback.ttf",
+        "/system/fonts/NotoSansCJK-Regular.ttc",   // 部分设备（CFF，可能不被支持）
+        "/system/fonts/NotoSerifCJK-Regular.ttc",
+        "/system/fonts/NotoSansSC-Regular.otf",
+    };
+
+    for (const char* p : cands)
+    {
+        if (access(p, R_OK) != 0) continue;
+        Io->Fonts->Clear();                        // 上一个字体若不可用，清空重来
+        ImFontConfig cfg;
+        cfg.SizePixels = 45;
+        cfg.OversampleH = 1;
+        cfg.OversampleV = 1;
+        ImFont* f = Io->Fonts->AddFontFromFileTTF(p, 45.0f, &cfg, RanGes.Data);
+        if (f != nullptr && Io->Fonts->Build())
+        {
+            __android_log_print(ANDROID_LOG_INFO, "FPS_MON",
+                                "中文字体 OK: %s 图集=%dx%d", p, Io->Fonts->TexWidth, Io->Fonts->TexHeight);
+            return true;
+        }
+        __android_log_print(ANDROID_LOG_WARN, "FPS_MON", "字体不兼容，跳过: %s", p);
+    }
+
+    // 都不行 → 内置默认字体（无中文，但保证不崩）
+    Io->Fonts->Clear();
+    ImFontConfig fc;
+    fc.SizePixels = 22.0f;
+    Io->Fonts->AddFontDefault(&fc);
+    Io->Fonts->Build();
+    __android_log_print(ANDROID_LOG_ERROR, "FPS_MON",
+                        "未找到可用中文字体，回退内置默认字体（中文可能显示为方块）");
+    return false;
 }
 bool ImGui_init() {
     if (g_Initialized) {
@@ -261,11 +278,8 @@ bool ImGui_init() {
     ImGui_ImplOpenGL3_Init("#version 300 es");
     // 使用系统自带的中文字体（/system/fonts/NotoSansCJK），不再内嵌字体文件：
     // 体积更小、无第三方字体版权问题；失败时回退到 ImGui 内置默认字体。
-    if (!Android_LoadSystemFont()) {
-        ImFontConfig font_cfg;
-        font_cfg.SizePixels = 22.0f;
-        io.Fonts->AddFontDefault(&font_cfg);
-    }
+    // 内部会逐个探测候选字体，选中可用的那个并构建好图集；失败会回退内置默认字体（不会崩）
+    Android_LoadSystemFont();
     ImGui::GetStyle().ScaleAllSizes(3.0f);
     ImGuiMenustyle1();
     g_Initialized = true;
@@ -273,11 +287,17 @@ bool ImGui_init() {
 }
 
 void drawBegin() {
+    static bool s_first = true;
+    if (s_first) __android_log_print(ANDROID_LOG_INFO, "FPS_MON", "[B1] screen_config ...");
     screen_config();
+    if (s_first) __android_log_print(ANDROID_LOG_INFO, "FPS_MON", "[B2] OpenGL3_NewFrame ...");
     ImGui_ImplOpenGL3_NewFrame();
   //  cout << " width:" << displayInfo.width << " height:" << displayInfo.height << " orientation:" << displayInfo.orientation << endl;
+    if (s_first) __android_log_print(ANDROID_LOG_INFO, "FPS_MON", "[B3] Android_NewFrame ...");
     ImGui_ImplAndroid_NewFrame((int32_t) displayInfo.width+displayInfo.height, (int32_t) displayInfo.height+displayInfo.width);
+    if (s_first) __android_log_print(ANDROID_LOG_INFO, "FPS_MON", "[B4] ImGui::NewFrame ...");
     ImGui::NewFrame();
+    if (s_first) { __android_log_print(ANDROID_LOG_INFO, "FPS_MON", "[B5] drawBegin 完成"); s_first = false; }
 }
 
 

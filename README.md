@@ -158,7 +158,9 @@ A：不需要。只需要 root。
 - **Dear ImGui**（MIT License）—— 界面绘制，见 `jni/` 下各源码文件头部声明。
 - **ANativeWindowCreator**（`jni/include/native_surface/ANativeWindowCreator.h`）——
   直接创建 SurfaceFlinger 窗口图层，是本项目能「免 Java 悬浮窗」的关键。
-- 中文字体使用**系统自带**的 Noto Sans CJK（`/system/fonts`），不内嵌任何字体文件。
+- 中文字体**不内嵌字体文件**：运行时从 `/system/fonts` 逐个探测可用字体并做「能不能被 stb_truetype 解析」的验证，
+  优先小米 `MiSansVF.ttf` 等真 TrueType 中文字体（`NotoSansCJK` 是 CFF 轮廓，stb 渲染不了，会自动跳过），
+  全部不可用才回退 ImGui 内置字体（此时中文可能显示为方块，但不会崩溃）。
 
 ## 十、许可证
 
