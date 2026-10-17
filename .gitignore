@@ -1,0 +1,11 @@
+# ndk-build 产物
+/libs/
+/obj/
+*.o
+*.a
+*.so
+
+# 编辑器 / 系统
+.DS_Store
+*.swp
+*~
