@@ -7,6 +7,10 @@
 #include <sys/system_properties.h>
 
 #include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <link.h>
+#include <elf.h>
 #include <unordered_map>
 #include <string>
 #include <vector>
@@ -107,6 +111,104 @@ namespace android {
             inline explicit operator bool() const { return nullptr != pointer; }
         };
 
+        // 在已加载的 .so 里按“函数名子串”查找导出符号。
+        // 用于补丁表未覆盖的系统版本（如 Android 16）或 OEM 定制导致符号签名变化的场景。
+        struct FuzzySymbolSearch
+        {
+            const char *libNameSub;
+            const char *symbolNameSub;
+            void *found;
+        };
+
+        inline int FuzzySymbolCallback(struct dl_phdr_info *info, size_t, void *data)
+        {
+            auto *context = static_cast<FuzzySymbolSearch *>(data);
+            if (nullptr == info->dlpi_name || nullptr == std::strstr(info->dlpi_name, context->libNameSub))
+                return 0;
+
+            const ElfW(Dyn) *dynamic = nullptr;
+            for (int i = 0; i < info->dlpi_phnum; ++i)
+            {
+                if (PT_DYNAMIC == info->dlpi_phdr[i].p_type)
+                {
+                    dynamic = reinterpret_cast<const ElfW(Dyn) *>(reinterpret_cast<const char *>(info->dlpi_addr) + info->dlpi_phdr[i].p_vaddr);
+                    break;
+                }
+            }
+            if (nullptr == dynamic)
+                return 0;
+
+            const ElfW(Sym) *symbolTable = nullptr;
+            const char *stringTable = nullptr;
+            const uint32_t *sysvHash = nullptr;
+            const uint32_t *gnuHash = nullptr;
+
+            // Android(bionic) 的动态节里这些地址是相对加载基址的，需要加上 dlpi_addr。
+            const uintptr_t loadBase = static_cast<uintptr_t>(info->dlpi_addr);
+            for (const ElfW(Dyn) *entry = dynamic; DT_NULL != entry->d_tag; ++entry)
+            {
+                switch (entry->d_tag)
+                {
+                    case DT_SYMTAB: symbolTable = reinterpret_cast<const ElfW(Sym) *>(loadBase + entry->d_un.d_ptr); break;
+                    case DT_STRTAB: stringTable = reinterpret_cast<const char *>(loadBase + entry->d_un.d_ptr); break;
+                    case DT_HASH: sysvHash = reinterpret_cast<const uint32_t *>(loadBase + entry->d_un.d_ptr); break;
+                    case DT_GNU_HASH: gnuHash = reinterpret_cast<const uint32_t *>(loadBase + entry->d_un.d_ptr); break;
+                    default: break;
+                }
+            }
+
+            if (nullptr == symbolTable || nullptr == stringTable)
+                return 0;
+
+            size_t symbolCount = 0;
+            if (nullptr != sysvHash)
+            {
+                symbolCount = sysvHash[1];
+            }
+            else if (nullptr != gnuHash)
+            {
+                const uint32_t bucketCount = gnuHash[0];
+                const uint32_t symbolOffset = gnuHash[1];
+                const uint32_t bloomSize = gnuHash[2];
+                const uint32_t *buckets = gnuHash + 4 + bloomSize * (sizeof(ElfW(Addr)) / sizeof(uint32_t));
+                const uint32_t *chains = buckets + bucketCount;
+                size_t maxIndex = 0;
+                for (uint32_t bucket = 0; bucket < bucketCount; ++bucket)
+                {
+                    uint32_t index = buckets[bucket];
+                    if (index < symbolOffset)
+                        continue;
+                    while (true)
+                    {
+                        if (index > maxIndex)
+                            maxIndex = index;
+                        if (chains[index - symbolOffset] & 1u)
+                            break;
+                        ++index;
+                    }
+                }
+                symbolCount = maxIndex + 1;
+            }
+
+            for (size_t i = 0; i < symbolCount; ++i)
+            {
+                const char *name = stringTable + symbolTable[i].st_name;
+                if (nullptr != name && '\0' != name[0] && nullptr != std::strstr(name, context->symbolNameSub))
+                {
+                    context->found = reinterpret_cast<void *>(static_cast<uintptr_t>(info->dlpi_addr) + symbolTable[i].st_value);
+                    return 1;
+                }
+            }
+            return 0;
+        }
+
+        inline void *FindSymbolFuzzy(const char *libNameSub, const char *symbolNameSub)
+        {
+            FuzzySymbolSearch context{libNameSub, symbolNameSub, nullptr};
+            dl_iterate_phdr(FuzzySymbolCallback, &context);
+            return context.found;
+        }
+
         struct Functionals
         {
             struct SymbolMethod
@@ -160,6 +262,8 @@ namespace android {
                     __android_log_print(ANDROID_LOG_ERROR, "ImGui", "[-] Unsupported system version: %zu", systemVersion);
                     return;
                 }
+
+                __android_log_print(ANDROID_LOG_INFO, "ImGui", "[+] SurfaceComposer system version: %zu", systemVersion);
 
                 static std::unordered_map<size_t, std::unordered_map<void **, const char *>> patchesTable = {
                     {
@@ -252,6 +356,52 @@ namespace android {
                             continue;
 
                         __android_log_print(ANDROID_LOG_ERROR, "ImGui", "[-] Patch method not found: %s", signature);
+                    }
+                }
+
+                // 补丁表未覆盖的版本（如 Android 16）或 OEM 符号差异：按函数名子串在 .so 里兜底查找
+                struct FuzzyEntry
+                {
+                    void **slot;
+                    const char *libNameSub;
+                    const char *symbolNameSub;
+                };
+
+                static const FuzzyEntry fuzzyEntries[] = {
+                    {reinterpret_cast<void **>(&RefBase__IncStrong), "libutils.so", "7RefBase9incStrongEPKv"},
+                    {reinterpret_cast<void **>(&RefBase__DecStrong), "libutils.so", "7RefBase9decStrongEPKv"},
+                    {reinterpret_cast<void **>(&String8__Constructor), "libutils.so", "7String8C2EPKc"},
+                    {reinterpret_cast<void **>(&String8__Destructor), "libutils.so", "7String8D2Ev"},
+                    {reinterpret_cast<void **>(&LayerMetadata__Constructor), "libgui.so", "3gui13LayerMetadataC2Ev"},
+                    {reinterpret_cast<void **>(&SurfaceComposerClient__Constructor), "libgui.so", "21SurfaceComposerClientC2Ev"},
+                    {reinterpret_cast<void **>(&SurfaceComposerClient__CreateSurface), "libgui.so", "13createSurface"},
+                    {reinterpret_cast<void **>(&SurfaceComposerClient__GetInternalDisplayToken), "libgui.so", "23getInternalDisplayToken"},
+                    {reinterpret_cast<void **>(&SurfaceComposerClient__GetDisplayState), "libgui.so", "15getDisplayState"},
+                    {reinterpret_cast<void **>(&SurfaceComposerClient__GetPhysicalDisplayIds), "libgui.so", "21getPhysicalDisplayIds"},
+                    {reinterpret_cast<void **>(&SurfaceComposerClient__GetPhysicalDisplayToken), "libgui.so", "23getPhysicalDisplayToken"},
+                    {reinterpret_cast<void **>(&SurfaceComposerClient__Transaction__Constructor), "libgui.so", "11TransactionC2Ev"},
+                    {reinterpret_cast<void **>(&SurfaceComposerClient__Transaction__SetLayer), "libgui.so", "11Transaction8setLayer"},
+                    {reinterpret_cast<void **>(&SurfaceComposerClient__Transaction__SetTrustedOverlay), "libgui.so", "11Transaction17setTrustedOverlay"},
+                    {reinterpret_cast<void **>(&SurfaceComposerClient__Transaction__Apply), "libgui.so", "11Transaction5applyEbb"},
+                    {reinterpret_cast<void **>(&SurfaceControl__Validate), "libgui.so", "14SurfaceControl8validate"},
+                    {reinterpret_cast<void **>(&SurfaceControl__GetSurface), "libgui.so", "14SurfaceControl10getSurface"},
+                    {reinterpret_cast<void **>(&SurfaceControl__DisConnect), "libgui.so", "14SurfaceControl9disconnect"},
+                };
+
+                for (const auto &fuzzyEntry : fuzzyEntries)
+                {
+                    if (nullptr != *fuzzyEntry.slot)
+                        continue;
+
+                    void *resolved = FindSymbolFuzzy(fuzzyEntry.libNameSub, fuzzyEntry.symbolNameSub);
+                    if (nullptr != resolved)
+                    {
+                        *fuzzyEntry.slot = resolved;
+                        __android_log_print(ANDROID_LOG_INFO, "ImGui", "[+] Fuzzy resolved: %s", fuzzyEntry.symbolNameSub);
+                    }
+                    else
+                    {
+                        __android_log_print(ANDROID_LOG_ERROR, "ImGui", "[-] Fuzzy not found: %s", fuzzyEntry.symbolNameSub);
                     }
                 }
 
