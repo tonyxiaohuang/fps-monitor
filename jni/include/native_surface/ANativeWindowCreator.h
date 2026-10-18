@@ -118,6 +118,7 @@ namespace android {
             const char *libNameSub;
             const char *symbolNameSub;
             void *found;
+            const char *foundName;
         };
 
         inline int FuzzySymbolCallback(struct dl_phdr_info *info, size_t, void *data)
@@ -196,16 +197,19 @@ namespace android {
                 if (nullptr != name && '\0' != name[0] && nullptr != std::strstr(name, context->symbolNameSub))
                 {
                     context->found = reinterpret_cast<void *>(static_cast<uintptr_t>(info->dlpi_addr) + symbolTable[i].st_value);
+                    context->foundName = name;
                     return 1;
                 }
             }
             return 0;
         }
 
-        inline void *FindSymbolFuzzy(const char *libNameSub, const char *symbolNameSub)
+        inline void *FindSymbolFuzzy(const char *libNameSub, const char *symbolNameSub, const char **foundName = nullptr)
         {
-            FuzzySymbolSearch context{libNameSub, symbolNameSub, nullptr};
+            FuzzySymbolSearch context{libNameSub, symbolNameSub, nullptr, nullptr};
             dl_iterate_phdr(FuzzySymbolCallback, &context);
+            if (nullptr != foundName)
+                *foundName = context.foundName;
             return context.found;
         }
 
@@ -266,6 +270,13 @@ namespace android {
                 __android_log_print(ANDROID_LOG_INFO, "ImGui", "[+] SurfaceComposer system version: %zu", systemVersion);
 
                 static std::unordered_map<size_t, std::unordered_map<void **, const char *>> patchesTable = {
+                    {
+                        16,
+                        {
+                            {reinterpret_cast<void **>(&LayerMetadata__Constructor), "_ZN7android3gui13LayerMetadataC2Ev"},
+                            {reinterpret_cast<void **>(&SurfaceComposerClient__CreateSurface), "_ZN7android21SurfaceComposerClient13createSurfaceERKNS_7String8EjjiiRKNS_2spINS_7IBinderEEENS_3gui13LayerMetadataEPj"},
+                        },
+                    },
                     {
                         15,
                         {
@@ -373,19 +384,19 @@ namespace android {
                     {reinterpret_cast<void **>(&String8__Constructor), "libutils.so", "7String8C2EPKc"},
                     {reinterpret_cast<void **>(&String8__Destructor), "libutils.so", "7String8D2Ev"},
                     {reinterpret_cast<void **>(&LayerMetadata__Constructor), "libgui.so", "3gui13LayerMetadataC2Ev"},
-                    {reinterpret_cast<void **>(&SurfaceComposerClient__Constructor), "libgui.so", "21SurfaceComposerClientC2Ev"},
-                    {reinterpret_cast<void **>(&SurfaceComposerClient__CreateSurface), "libgui.so", "13createSurface"},
-                    {reinterpret_cast<void **>(&SurfaceComposerClient__GetInternalDisplayToken), "libgui.so", "23getInternalDisplayToken"},
-                    {reinterpret_cast<void **>(&SurfaceComposerClient__GetDisplayState), "libgui.so", "15getDisplayState"},
-                    {reinterpret_cast<void **>(&SurfaceComposerClient__GetPhysicalDisplayIds), "libgui.so", "21getPhysicalDisplayIds"},
-                    {reinterpret_cast<void **>(&SurfaceComposerClient__GetPhysicalDisplayToken), "libgui.so", "23getPhysicalDisplayToken"},
-                    {reinterpret_cast<void **>(&SurfaceComposerClient__Transaction__Constructor), "libgui.so", "11TransactionC2Ev"},
-                    {reinterpret_cast<void **>(&SurfaceComposerClient__Transaction__SetLayer), "libgui.so", "11Transaction8setLayer"},
-                    {reinterpret_cast<void **>(&SurfaceComposerClient__Transaction__SetTrustedOverlay), "libgui.so", "11Transaction17setTrustedOverlay"},
-                    {reinterpret_cast<void **>(&SurfaceComposerClient__Transaction__Apply), "libgui.so", "11Transaction5applyEbb"},
-                    {reinterpret_cast<void **>(&SurfaceControl__Validate), "libgui.so", "14SurfaceControl8validate"},
-                    {reinterpret_cast<void **>(&SurfaceControl__GetSurface), "libgui.so", "14SurfaceControl10getSurface"},
-                    {reinterpret_cast<void **>(&SurfaceControl__DisConnect), "libgui.so", "14SurfaceControl9disconnect"},
+                    {reinterpret_cast<void **>(&SurfaceComposerClient__Constructor), "libgui.so", "7android21SurfaceComposerClientC2Ev"},
+                    {reinterpret_cast<void **>(&SurfaceComposerClient__CreateSurface), "libgui.so", "7android21SurfaceComposerClient13createSurface"},
+                    {reinterpret_cast<void **>(&SurfaceComposerClient__GetInternalDisplayToken), "libgui.so", "7android21SurfaceComposerClient23getInternalDisplayToken"},
+                    {reinterpret_cast<void **>(&SurfaceComposerClient__GetDisplayState), "libgui.so", "7android21SurfaceComposerClient15getDisplayState"},
+                    {reinterpret_cast<void **>(&SurfaceComposerClient__GetPhysicalDisplayIds), "libgui.so", "7android21SurfaceComposerClient21getPhysicalDisplayIds"},
+                    {reinterpret_cast<void **>(&SurfaceComposerClient__GetPhysicalDisplayToken), "libgui.so", "7android21SurfaceComposerClient23getPhysicalDisplayToken"},
+                    {reinterpret_cast<void **>(&SurfaceComposerClient__Transaction__Constructor), "libgui.so", "7android21SurfaceComposerClient11TransactionC2Ev"},
+                    {reinterpret_cast<void **>(&SurfaceComposerClient__Transaction__SetLayer), "libgui.so", "7android21SurfaceComposerClient11Transaction8setLayer"},
+                    {reinterpret_cast<void **>(&SurfaceComposerClient__Transaction__SetTrustedOverlay), "libgui.so", "7android21SurfaceComposerClient11Transaction17setTrustedOverlay"},
+                    {reinterpret_cast<void **>(&SurfaceComposerClient__Transaction__Apply), "libgui.so", "7android21SurfaceComposerClient11Transaction5applyEbb"},
+                    {reinterpret_cast<void **>(&SurfaceControl__Validate), "libgui.so", "7android14SurfaceControl8validate"},
+                    {reinterpret_cast<void **>(&SurfaceControl__GetSurface), "libgui.so", "7android14SurfaceControl10getSurface"},
+                    {reinterpret_cast<void **>(&SurfaceControl__DisConnect), "libgui.so", "7android14SurfaceControl9disconnect"},
                 };
 
                 for (const auto &fuzzyEntry : fuzzyEntries)
@@ -393,17 +404,20 @@ namespace android {
                     if (nullptr != *fuzzyEntry.slot)
                         continue;
 
-                    void *resolved = FindSymbolFuzzy(fuzzyEntry.libNameSub, fuzzyEntry.symbolNameSub);
+                    const char *matchedName = nullptr;
+                    void *resolved = FindSymbolFuzzy(fuzzyEntry.libNameSub, fuzzyEntry.symbolNameSub, &matchedName);
                     if (nullptr != resolved)
                     {
                         *fuzzyEntry.slot = resolved;
-                        __android_log_print(ANDROID_LOG_INFO, "ImGui", "[+] Fuzzy resolved: %s", fuzzyEntry.symbolNameSub);
+                        __android_log_print(ANDROID_LOG_INFO, "ImGui", "[+] Fuzzy resolved: %s -> %s", fuzzyEntry.symbolNameSub, matchedName ? matchedName : "?");
                     }
                     else
                     {
                         __android_log_print(ANDROID_LOG_ERROR, "ImGui", "[-] Fuzzy not found: %s", fuzzyEntry.symbolNameSub);
                     }
                 }
+
+                __android_log_print(ANDROID_LOG_INFO, "ImGui", "[*] Functionals init done");
 
                 symbolMethod.Close(libutils);
                 symbolMethod.Close(libgui);
@@ -525,14 +539,20 @@ namespace android {
             char data[1024];
 
             SurfaceComposerClient() {
+                __android_log_print(ANDROID_LOG_INFO, "ImGui", "[*] SCC ctor: enter");
                 Functionals::GetInstance().SurfaceComposerClient__Constructor(data);
+                __android_log_print(ANDROID_LOG_INFO, "ImGui", "[*] SCC ctor: Constructor ok");
                 Functionals::GetInstance().RefBase__IncStrong(data, this);
+                __android_log_print(ANDROID_LOG_INFO, "ImGui", "[*] SCC ctor: done");
             }
 
             SurfaceControl CreateSurface(const char *name, int32_t width, int32_t height, bool skipScrenshot) {
+                __android_log_print(ANDROID_LOG_INFO, "ImGui", "[*] CS: enter %s %dx%d", name, width, height);
                 void *parentHandle = nullptr;
                 String8 windowName(name);
+                __android_log_print(ANDROID_LOG_INFO, "ImGui", "[*] CS: String8 ok");
                 LayerMetadata layerMetadata;
+                __android_log_print(ANDROID_LOG_INFO, "ImGui", "[*] CS: LayerMetadata ok");
                 if (skipScrenshot && (Functionals::GetInstance().systemVersion == 10 || Functionals::GetInstance().systemVersion == 11)) {
                     layerMetadata.setInt32(2u, 441731);
                 }
@@ -555,13 +575,18 @@ namespace android {
                     } 
                     result = Functionals::GetInstance().SurfaceComposerClient__CreateSurface_and9(data, windowName, width, height, 1, flags, parentHandle, windowType, ownerUid);                
                 } else if (Functionals::GetInstance().systemVersion >= 10) {
+                    __android_log_print(ANDROID_LOG_INFO, "ImGui", "[*] CS: call createSurface ...");
                     result = Functionals::GetInstance().SurfaceComposerClient__CreateSurface(data, windowName, width, height, 1, flags, parentHandle, layerMetadata, nullptr);
+                    __android_log_print(ANDROID_LOG_INFO, "ImGui", "[*] CS: createSurface ret=%p", result.get());
                 }
                 
                 if (12 <= Functionals::GetInstance().systemVersion) {
                     static SurfaceComposerClientTransaction transaction;
+                    __android_log_print(ANDROID_LOG_INFO, "ImGui", "[*] CS: SetTrustedOverlay ...");
                     transaction.SetTrustedOverlay(result, true);
+                    __android_log_print(ANDROID_LOG_INFO, "ImGui", "[*] CS: Apply ...");
                     transaction.Apply(false, true);
+                    __android_log_print(ANDROID_LOG_INFO, "ImGui", "[*] CS: Apply done");
                 }
                 return {result.get()};
             }
@@ -575,11 +600,15 @@ namespace android {
                     if (14 > Functionals::GetInstance().systemVersion) {//小于或者等于安卓13
                         defaultDisplay = Functionals::GetInstance().SurfaceComposerClient__GetInternalDisplayToken();
                     } else { //安卓14级以上
+                        __android_log_print(ANDROID_LOG_INFO, "ImGui", "[*] GDI: call getPhysicalDisplayIds ...");
                         auto displayIds = Functionals::GetInstance().SurfaceComposerClient__GetPhysicalDisplayIds();
+                        __android_log_print(ANDROID_LOG_INFO, "ImGui", "[*] GDI: getPhysicalDisplayIds ok, n=%zu", displayIds.size());
                         if (displayIds.empty())
                             return false;
 
+                        __android_log_print(ANDROID_LOG_INFO, "ImGui", "[*] GDI: call getPhysicalDisplayToken ...");
                         defaultDisplay = Functionals::GetInstance().SurfaceComposerClient__GetPhysicalDisplayToken(displayIds[0]);
+                        __android_log_print(ANDROID_LOG_INFO, "ImGui", "[*] GDI: getPhysicalDisplayToken ok=%p", defaultDisplay.get());
                     }
                 }
 
@@ -587,7 +616,10 @@ namespace android {
                     return false;
 
                 if (11 <= Functionals::GetInstance().systemVersion) { //大于或者等于安卓11
-                    return 0 == Functionals::GetInstance().SurfaceComposerClient__GetDisplayState(defaultDisplay, displayInfo);
+                    __android_log_print(ANDROID_LOG_INFO, "ImGui", "[*] GDI: call getDisplayState ...");
+                    int32_t stateRet = Functionals::GetInstance().SurfaceComposerClient__GetDisplayState(defaultDisplay, displayInfo);
+                    __android_log_print(ANDROID_LOG_INFO, "ImGui", "[*] GDI: getDisplayState ret=%d", stateRet);
+                    return 0 == stateRet;
                 } else { //安卓10及以下
                     ui::DisplayInfo realDisplayInfo{};
                     if (0 != Functionals::GetInstance().SurfaceComposerClient__GetDisplayInfo(defaultDisplay, &realDisplayInfo))
