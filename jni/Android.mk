@@ -2,8 +2,8 @@ LOCAL_PATH := $(call my-dir)
 
 include $(CLEAR_VARS)
 
-# 输出可执行文件名：libs/arm64-v8a/fps_monitor
-LOCAL_MODULE := fps_monitor
+# 输出可执行文件名：libs/arm64-v8a/fps_monitor.sh
+LOCAL_MODULE := fps_monitor.sh
 
 # 关闭警告、开 C++17 / 异常 / permissive（ImGui + 老代码需要）
 LOCAL_CPPFLAGS += -w -std=c++17 -fexceptions -fpermissive
